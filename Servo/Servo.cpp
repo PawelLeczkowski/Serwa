@@ -4,22 +4,31 @@
 
 #include "Servo.h"
 
+// todo dodac walidacje argumentow
 constexpr s16 steps = 4096;
 constexpr u32 oneStepSpeed = 68306; // exactly 68,3060109289618
 
 /*
  Simplest GoTo function.
  angle => degreees (0 - 360)
- speedRPM => rotations per minute (0 - 449)
+ speedRPM => rotations per minute (0 - ~45)
  acceleration => not a standard unit (0 - 150)
  */
 void GoToAngle(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acceleration) {
+	angle %= 360;
 	s16 position = angle * steps / 360 ;
 	u16 speed = oneStepSpeed * speedRPM / 1000;
 	servos.WritePosEx(id, position, speed, acceleration);
 }
 
+/*
+ Simplest GoTo function but chooses closest way to turn.
+ angle => degreees (0 - 360)
+ speedRPM => rotations per minute (0 - ~45)
+ acceleration => not a standard unit (0 - 150)
+*/
 void GoToAngleClosestWay(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acceleration) {
+	angle %= 360;
 	const s16 position = (angle * steps) / 360;
 	const u16 speed = oneStepSpeed * speedRPM / 1000;
 
@@ -40,22 +49,32 @@ void GoToAngleClosestWay(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acc
 	}
 
 	if (delta >= 0) {
-		servos.WritePosEx(id, position, -speed, acceleration);
+		servos.WritePosEx(id, position, speed, acceleration);
 	}
 	else {
-		servos.WritePosEx(id, position, speed, acceleration);
+		servos.WritePosEx(id, position, -speed, acceleration);
 	}
 }
 
+/*
+ Simplest GoTo function but does it as afast as possible.
+ angle => degreees (0 - 360)
+*/
 void GoToAngleASAP(SMS_STS& servos, u8 id, u16 angle) {
+	angle %= 360;
 	s16 position = angle * steps / 360 ;
 	servos.WritePosEx(id, position, 3073, 0);
 }
 
+/*
+ Simplest GoTo function but does it as afast as possible and chooses closest way to turn.
+ angle => degreees (0 - 360)
+*/
 void GoToAngleClosestWayASAP(SMS_STS& servos, u8 id, u16 angle) {
+	angle %= 360;
 	const s16 position = angle * steps / 360 ;
 
-	if(servos.FeedBack(id) == -1){
+	if(servos.FeedBack(id) == -1) {
 		Serial.println("GetInfo error");
 		return;
 	}
@@ -72,10 +91,10 @@ void GoToAngleClosestWayASAP(SMS_STS& servos, u8 id, u16 angle) {
 	}
 
 	if (delta >= 0) {
-		servos.WritePosEx(id, position, -3073, 0);
+		servos.WritePosEx(id, position, 3073, 0); // todo test
 	}
 	else {
-		servos.WritePosEx(id, position, 3073, 0);
+		servos.WritePosEx(id, position, -3073, 0);
 	}
 }
 
