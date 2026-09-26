@@ -2,119 +2,207 @@
 // Created by pawel on 22.09.2026.
 //
 
+/*
+https://www.waveshare.com/servo-driver-with-esp32.htm
+
+https://docs.waveshare.com/Servo_Driver_with_ESP32/Resources-And-Documents
+
+https://docs.waveshare.com/Servo_Driver_with_ESP32/Product-Use
+
+https://github.com/hybotix/STS3215-Tutorial/blob/main/REGISTER_REFERENCE.md
+
+https://www.waveshare.com/wiki/ST3215_Servo
+*/
+
 #include "Servo.h"
 
-// todo dodac walidacje argumentow
-constexpr s16 steps = 4096;
-constexpr u32 oneStepSpeed = 68306; // exactly 68,3060109289618
+# define steps 4096
+# define SPEED_UNITS_PER_RPM (1.0 / 0.01464)
+
+int currentSerwoPositionVertical = 0;
+int currentSerwoPositionHorizontal = 0;
 
 /*
- Simplest GoTo function.
- angle => degreees (0 - 360)
- speedRPM => rotations per minute (0 - ~45)
- acceleration => not a standard unit (0 - 150)
- */
-void GoToAngle(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acceleration) {
-	angle %= 360;
-	s16 position = angle * steps / 360 ;
-	u16 speed = oneStepSpeed * speedRPM / 1000;
-	servos.WritePosEx(id, position, speed, acceleration);
+Calibrates and initiates servos.
+*/
+void InitServos(SMS_STS &servos, u8 numberOfservos, ...) {
+	va_list ap;
+	va_start(ap, numberOfservos);
+	for(int i = 0; i < numberOfservos; i++) {
+		const int id = va_arg(ap, int);
+
+		servos.EnableTorque(id, 0);
+
+		servos.unLockEprom(id);
+		// 3 => step servo mode
+		servos.writeByte(id, SMS_STS_MODE, 3);
+
+		servos.writeByte(id, SMS_STS_MIN_ANGLE_LIMIT_L, 0);
+		servos.writeByte(id, SMS_STS_MIN_ANGLE_LIMIT_H, 0);
+
+		servos.writeByte(id, SMS_STS_MAX_ANGLE_LIMIT_L, 0);
+		servos.writeByte(id, SMS_STS_MAX_ANGLE_LIMIT_H, 0);
+
+		servos.LockEprom(id);
+
+		servos.EnableTorque(id, 1);
+	}
+	va_end(ap);
 }
 
 /*
- Simplest GoTo function but chooses closest way to turn.
- angle => degreees (0 - 360)
- speedRPM => rotations per minute (0 - ~45)
- acceleration => not a standard unit (0 - 150)
+Resets servos into facctory settings. Make sure to stop all servos before calling.
 */
-void GoToAngleClosestWay(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acceleration) {
-	angle %= 360;
-	const s16 position = (angle * steps) / 360;
-	const u16 speed = oneStepSpeed * speedRPM / 1000;
+void ClearServos(SMS_STS& servos, u8 numberOfServos, ...) {
+	va_list ap;
+	va_start(ap, numberOfServos);
 
-	if(servos.FeedBack(id) == -1){
-		Serial.println("GetInfo error");
-		return;
+	for (int i = 0; i < numberOfServos; i++) {
+
+		const u8 id = va_arg(ap, int);
+
+		if (!servos.EnableTorque(id, 0)) {
+			Serial.println("ClearServos error, EnableTorque 1");
+		}
+
+		if (!servos.unLockEprom(id)) {
+			Serial.println("ClearServos error, unLockEprom");
+		}
+
+		if (!servos.writeByte(id, SMS_STS_MODE, 0)) {
+			Serial.println("ClearServos error, writeByte 1");
+		}
+
+		if (!servos.writeByte(id, SMS_STS_MIN_ANGLE_LIMIT_L, 0)) {
+			Serial.println("ClearServos error, writeByte 2");
+		}
+		if (!servos.writeByte(id, SMS_STS_MIN_ANGLE_LIMIT_H, 0)) {
+			Serial.println("ClearServos error, writeByte 3");
+		}
+
+		if (!servos.writeByte(id, SMS_STS_MAX_ANGLE_LIMIT_L, 0xFF)) {
+			Serial.println("ClearServos error, writeByte 4");
+		}
+		if (!servos.writeByte(id, SMS_STS_MAX_ANGLE_LIMIT_H, 0x0F)) {
+			Serial.println("ClearServos error, writeByte 5");
+		}
+
+		if (!servos.LockEprom(id)) {
+			Serial.println("ClearServos error, LockEprom");
+		}
+
+		if (!servos.EnableTorque(id, 1)) {
+			Serial.println("ClearServos error, EnableTorque 2");
+		}
+
+		if (!servos.WritePosEx(id, 0, 3072, 0)) {
+			Serial.println("ClearServos error, WritePosEx");
+		}
 	}
-	const int currentPosition = servos.ReadPos(-1);
 
-	int delta =	position - currentPosition;
+	va_end(ap);
+}
+
+/*
+ Simplest GoTo function, but chooses closest way to turn.
+ angle => degreees (0 - 359)
+ speedRPM => rotations per minute (0 - 45)
+ acceleration => not a standard unit (0 - 150) (gives small delay to avoid sudden speedup)
+*/
+void GoToAngle(SMS_STS& servos, u8 id, u16 angle, u16 speedRPM, u8 acceleration) {
+	speedRPM = constrain(speedRPM, 0, 45);
+	acceleration = constrain(acceleration, 0, 150);
+	angle %= 360;
+	const int targetPosition = static_cast<long>(angle) * steps / 360;
+	uint16_t speed = static_cast<u16>(floor(speedRPM * SPEED_UNITS_PER_RPM));
+
+	int delta = 0;
+	switch (id) {
+		case VERTICAL: {
+			delta = targetPosition - currentSerwoPositionVertical;
+			currentSerwoPositionVertical = targetPosition;
+			break;
+		}
+		case HORIZONTAL: {
+			delta = targetPosition - currentSerwoPositionHorizontal;
+			currentSerwoPositionHorizontal = targetPosition;
+			break;
+		}
+		default: {
+			Serial.println("GoToAngle id error");
+		}
+	}
 
 	if (delta > steps / 2) {
 		delta -= steps;
 	}
-
-	if (delta < -steps / 2) {
+	else if (delta < -steps / 2) {
 		delta += steps;
 	}
 
-	if (delta >= 0) {
-		servos.WritePosEx(id, position, speed, acceleration);
-	}
-	else {
-		servos.WritePosEx(id, position, -speed, acceleration);
+	if (!servos.WritePosEx(id, delta, speed, acceleration)) {
+		Serial.println("GoToAngle error");
 	}
 }
 
 /*
- Simplest GoTo function but does it as afast as possible.
- angle => degreees (0 - 360)
+ Simplest GoTo function, but does it as fast as possible and chooses closest way to turn.
+ angle => degreees (0 - 359)
 */
 void GoToAngleASAP(SMS_STS& servos, u8 id, u16 angle) {
 	angle %= 360;
-	s16 position = angle * steps / 360 ;
-	servos.WritePosEx(id, position, 3073, 0);
-}
 
-/*
- Simplest GoTo function but does it as afast as possible and chooses closest way to turn.
- angle => degreees (0 - 360)
-*/
-void GoToAngleClosestWayASAP(SMS_STS& servos, u8 id, u16 angle) {
-	angle %= 360;
-	const s16 position = angle * steps / 360 ;
+	const int targetPosition = static_cast<long>(angle) * steps / 360;
 
-	if(servos.FeedBack(id) == -1) {
-		Serial.println("GetInfo error");
-		return;
+	int delta = 0;
+	switch (id) {
+		case VERTICAL: {
+			delta = targetPosition - currentSerwoPositionVertical;
+			currentSerwoPositionVertical = targetPosition;
+			break;
+		}
+		case HORIZONTAL: {
+			delta = targetPosition - currentSerwoPositionHorizontal;
+			currentSerwoPositionHorizontal = targetPosition;
+			break;
+		}
+		default: {
+			Serial.println("GoToAngleASAP id error");
+		}
 	}
-	const int currentPosition = servos.ReadPos(-1);
-
-	int delta =	position - currentPosition;
 
 	if (delta > steps / 2) {
 		delta -= steps;
 	}
-
-	if (delta < -steps / 2) {
+	else if (delta < -steps / 2) {
 		delta += steps;
 	}
 
-	if (delta >= 0) {
-		servos.WritePosEx(id, position, 3073, 0); // todo test
-	}
-	else {
-		servos.WritePosEx(id, position, -3073, 0);
+	if (!servos.WritePosEx(id, delta, 3073, 0)) {
+		Serial.println("GoToAngleASAP error");
 	}
 }
 
+/*
+Returns ServoInfo structure containing information about selected servo.
+*/
 ServoInfo GetInfo(SMS_STS& servos, u8 id) {
 	if(servos.FeedBack(id)!=-1){
-		ServoInfo servo;
-		servo.Pos = servos.ReadPos(-1);
-		servo.Speed = servos.ReadSpeed(-1);
-		servo.Load = servos.ReadLoad(-1);
-		servo.Voltage = servos.ReadVoltage(-1);
-		servo.Temper = servos.ReadTemper(-1);
-		servo.Move = servos.ReadMove(-1);
-		servo.Current = servos.ReadCurrent(-1);
-		return servo;
+		ServoInfo info;
+		info.Pos = servos.ReadPos(-1);
+		info.Speed = servos.ReadSpeed(-1);
+		info.Load = servos.ReadLoad(-1);
+		info.Voltage = servos.ReadVoltage(-1);
+		info.Temper = servos.ReadTemper(-1);
+		info.Move = servos.ReadMove(-1);
+		info.Current = servos.ReadCurrent(-1);
+		return info;
 	}
 	Serial.println("GetInfo error");
 	return {};
 }
 
-
+// Luzne notatki dla innych
 // ze strony 360 stopni = 4096 krokow
 // https://www.waveshare.com/wiki/ST3215_Servo
 // speed => kroki na skundę; 50 steps/sec≈0.732RPM; max = 3073
